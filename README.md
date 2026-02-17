@@ -46,6 +46,14 @@ pnpm run dev
 
 ## WEB APP DESIGN:
 
-This web app...
+This web app is called "infinite timeline" and is educational software for those learning "deep history."
 
-NOTE: PLACE IMAGES IN THE `assets/` directory (if needed), then describe them and how they should be used.
+The main canvas features a horizontal timeline which travels from the Big Bang to the present day.  It can be panned and zoomed to focus on any given time period.  It uses OpenAI-compatible endpoints (DO NOT HARDCODE OPENAI MODEL NAMES - instead, the base URL, model names and api keys will be provided by the user in the .env file) to allow the user to talk to a chatbot to ask about history topics.
+
+We should use LangChain JS to build out agent and provide it with a tool to create timeline "events" and "periods" - for example "D Day invasion" or "World War II."
+
+Our timeline should be "rich" and allow for web links, images, and markdown text.  Events and time periods should be hidden/shown based upon the density and zoom level in order to create a very fluid and power experience where, over time, many hundreds of events and be populated as the student learns.
+
+We don't care about logins, user accounts and will store everything in the browser's IndexedDB.
+
+The top of the canvas should include a "Learn Bar" akin to a search bar which will launch a second agent that will engage with the student user and is able to zoom, pan and highlight sections of the timeline as tool calls in the course of a back and forth dialogue.
