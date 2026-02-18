@@ -1,10 +1,12 @@
 <script lang="ts">
-	import { Send, X, MessageSquare, Calendar, MapPin, Plus, Check } from 'lucide-svelte';
+	import { Send, X, MessageSquare, Calendar, MapPin, Plus, Check, GripVertical, Settings } from 'lucide-svelte';
 	import { chatState, apiConfigState, timelineState } from '$lib/stores.svelte';
-	import { sendMessageStreaming } from '$lib/agent';
-	import { addEvent, getAllEvents } from '$lib/db';
+	import { sendMessageStreaming, resetChatModel } from '$lib/agent';
+	import { addEvent, getAllEvents, saveApiConfig } from '$lib/db';
 	import { formatYear } from '$lib/timeline';
 	import { marked } from 'marked';
+
+	let showSettings = $state(false);
 
 	marked.setOptions({
 		breaks: true,
@@ -90,7 +92,7 @@
 		timelineState.centerYear = event.year;
 	}
 
-	function navigateToYear(year: number) {
+	function navigateToYear(year: number, title?: string) {
 		timelineState.centerYear = year;
 		const absYear = Math.abs(year);
 		if (absYear < 100) {
@@ -101,6 +103,15 @@
 			timelineState.zoomIndex = 5;
 		} else {
 			timelineState.zoomIndex = 6;
+		}
+		
+		if (title) {
+			const matchingEvent = timelineState.events.find(e => 
+				e.year === year && e.title.toLowerCase().includes(title.toLowerCase())
+			);
+			if (matchingEvent?.id) {
+				timelineState.selectedEventId = matchingEvent.id;
+			}
 		}
 	}
 
@@ -158,18 +169,65 @@
 			messagesContainer.scrollTop = messagesContainer.scrollHeight;
 		}
 	});
+
+	let panelWidth = $state(320);
+	let isResizing = $state(false);
+	let resizeStartX = 0;
+	let resizeStartWidth = 0;
+
+	function startResize(e: MouseEvent) {
+		e.preventDefault();
+		isResizing = true;
+		resizeStartX = e.clientX;
+		resizeStartWidth = panelWidth;
+		document.addEventListener('mousemove', handleResize);
+		document.addEventListener('mouseup', stopResize);
+	}
+
+	function handleResize(e: MouseEvent) {
+		if (!isResizing) return;
+		const dx = resizeStartX - e.clientX;
+		panelWidth = Math.max(280, Math.min(600, resizeStartWidth + dx));
+	}
+
+	function stopResize() {
+		isResizing = false;
+		document.removeEventListener('mousemove', handleResize);
+		document.removeEventListener('mouseup', stopResize);
+	}
+
+	async function saveSettings() {
+		if (apiConfigState.config) {
+			await saveApiConfig({
+				baseUrl: apiConfigState.config.baseUrl,
+				apiKey: apiConfigState.config.apiKey,
+				model: apiConfigState.config.model
+			});
+			apiConfigState.isConfigured = !!(apiConfigState.config.apiKey && apiConfigState.config.baseUrl);
+			resetChatModel();
+		}
+		showSettings = false;
+	}
 </script>
 
 {#if chatState.isOpen}
-	<aside class="chat-panel glass">
+	<aside class="chat-panel glass" style="width: {panelWidth}px;">
+		<div class="resize-handle" onmousedown={startResize} role="separator" aria-orientation="vertical">
+			<GripVertical size={12} />
+		</div>
 		<div class="chat-header">
 			<div class="header-title">
 				<MessageSquare size={18} />
 				<h3>Learn Assistant</h3>
 			</div>
-			<button class="icon-btn" onclick={closePanel} title="Close chat">
-				<X size={18} />
-			</button>
+			<div class="header-actions">
+				<button class="icon-btn" onclick={() => showSettings = true} title="Settings">
+					<Settings size={18} />
+				</button>
+				<button class="icon-btn" onclick={closePanel} title="Close chat">
+					<X size={18} />
+				</button>
+			</div>
 		</div>
 
 		<div class="chat-messages" bind:this={messagesContainer}>
@@ -207,7 +265,7 @@
 										<div class="event-actions">
 											<button 
 												class="event-action-btn view-btn" 
-												onclick={() => navigateToYear(event.year)}
+												onclick={() => navigateToYear(event.year, event.title)}
 												title="View on timeline"
 											>
 												<MapPin size={14} />
@@ -271,19 +329,81 @@
 			</div>
 		</div>
 	</aside>
+
+	{#if showSettings}
+		<div class="settings-modal-backdrop" onclick={() => showSettings = false} role="presentation">
+			<div class="settings-modal glass" onclick={(e) => e.stopPropagation()} role="dialog">
+				<h3>API Configuration</h3>
+				<p class="settings-note">Configure your OpenAI-compatible API endpoint</p>
+				
+				<label>
+					Base URL
+					<input
+						type="text"
+						placeholder="https://api.openai.com/v1"
+						bind:value={apiConfigState.config!.baseUrl}
+					/>
+				</label>
+				
+				<label>
+					API Key
+					<input
+						type="password"
+						placeholder="sk-..."
+						bind:value={apiConfigState.config!.apiKey}
+					/>
+				</label>
+				
+				<label>
+					Model
+					<input
+						type="text"
+						placeholder="gpt-4"
+						bind:value={apiConfigState.config!.model}
+					/>
+				</label>
+
+				<div class="settings-actions">
+					<button class="btn-secondary" onclick={() => showSettings = false}>Cancel</button>
+					<button class="btn-primary" onclick={saveSettings}>Save</button>
+				</div>
+			</div>
+		</div>
+	{/if}
 {/if}
 
 <style>
 	.chat-panel {
 		display: flex;
 		flex-direction: column;
-		width: 320px;
 		height: 100%;
 		border-radius: 0;
 		border-left: 1px solid var(--glass-border);
 		border-top: none;
 		border-bottom: none;
 		border-right: none;
+		position: relative;
+		flex-shrink: 0;
+	}
+
+	.resize-handle {
+		position: absolute;
+		left: 0;
+		top: 0;
+		bottom: 0;
+		width: 8px;
+		cursor: ew-resize;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		color: rgba(255, 255, 255, 0.3);
+		transition: color 0.15s, background 0.15s;
+		z-index: 10;
+	}
+
+	.resize-handle:hover {
+		color: rgba(255, 255, 255, 0.6);
+		background: rgba(255, 255, 255, 0.05);
 	}
 
 	.chat-header {
@@ -582,5 +702,96 @@
 	.send-btn:disabled {
 		opacity: 0.5;
 		cursor: not-allowed;
+	}
+
+	.header-actions {
+		display: flex;
+		gap: 4px;
+	}
+
+	.settings-modal-backdrop {
+		position: fixed;
+		inset: 0;
+		background: rgba(0, 0, 0, 0.5);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		z-index: 1000;
+	}
+
+	.settings-modal {
+		width: 90%;
+		max-width: 400px;
+		padding: 24px;
+	}
+
+	.settings-modal h3 {
+		margin: 0 0 8px 0;
+		font-size: 18px;
+	}
+
+	.settings-note {
+		margin: 0 0 20px 0;
+		font-size: 14px;
+		color: rgba(255, 255, 255, 0.6);
+	}
+
+	.settings-modal label {
+		display: block;
+		margin-bottom: 16px;
+		font-size: 14px;
+		color: rgba(255, 255, 255, 0.8);
+	}
+
+	.settings-modal input {
+		width: 100%;
+		margin-top: 6px;
+		padding: 10px 12px;
+		background: rgba(255, 255, 255, 0.1);
+		border: 1px solid rgba(255, 255, 255, 0.2);
+		border-radius: 8px;
+		color: white;
+		font-size: 14px;
+		outline: none;
+	}
+
+	.settings-modal input:focus {
+		border-color: var(--accent);
+	}
+
+	.settings-actions {
+		display: flex;
+		gap: 12px;
+		justify-content: flex-end;
+		margin-top: 24px;
+	}
+
+	.btn-secondary, .btn-primary {
+		padding: 10px 20px;
+		border-radius: 8px;
+		font-size: 14px;
+		font-weight: 500;
+		cursor: pointer;
+		transition: all 0.15s;
+	}
+
+	.btn-secondary {
+		background: transparent;
+		border: 1px solid rgba(255, 255, 255, 0.2);
+		color: white;
+	}
+
+	.btn-secondary:hover {
+		background: rgba(255, 255, 255, 0.1);
+	}
+
+	.btn-primary {
+		background: var(--accent);
+		border: none;
+		color: white;
+	}
+
+	.btn-primary:hover {
+		background: #5558e3;
 	}
 </style>

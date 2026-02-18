@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { X } from 'lucide-svelte';
+	import { X, Star } from 'lucide-svelte';
 	import { addEvent, getAllEvents } from '$lib/db';
 	import { timelineState } from '$lib/stores.svelte';
 	import { formatYear } from '$lib/timeline';
@@ -16,6 +16,9 @@
 	let description = $state('');
 	let eventType = $state<'event' | 'period'>('event');
 	let endYear = $state<number | null>(null);
+	let month = $state<number | undefined>(undefined);
+	let day = $state<number | undefined>(undefined);
+	let starred = $state(false);
 	let tags = $state('');
 	let isSubmitting = $state(false);
 
@@ -28,8 +31,11 @@
 				title: title.trim(),
 				description: description.trim(),
 				year,
+				month: month || undefined,
+				day: day || undefined,
 				endYear: eventType === 'period' && endYear ? endYear : undefined,
 				type: eventType,
+				starred,
 				tags: tags.split(',').map(t => t.trim()).filter(Boolean)
 			});
 			
@@ -106,6 +112,23 @@
 					/>
 				</label>
 			{/if}
+
+			<div class="date-row">
+				<label>
+					Month
+					<input type="number" min="1" max="12" bind:value={month} placeholder="—" />
+				</label>
+				<label>
+					Day
+					<input type="number" min="1" max="31" bind:value={day} placeholder="—" />
+				</label>
+			</div>
+
+			<label class="checkbox-label">
+				<input type="checkbox" bind:checked={starred} />
+				<Star size={14} />
+				Star this event
+			</label>
 
 			<label>
 				Tags (comma-separated)
@@ -219,8 +242,28 @@
 		cursor: pointer;
 	}
 
-	input[type="radio"] {
+	input[type="radio"],
+	input[type="checkbox"] {
 		accent-color: var(--accent);
+	}
+
+	.date-row {
+		display: flex;
+		gap: 12px;
+	}
+
+	.date-row label {
+		flex: 1;
+	}
+
+	.checkbox-label {
+		flex-direction: row;
+		align-items: center;
+		gap: 8px;
+		cursor: pointer;
+		padding: 8px 12px;
+		background: rgba(255, 255, 255, 0.05);
+		border-radius: 8px;
 	}
 
 	.actions {

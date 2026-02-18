@@ -1,11 +1,11 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { timelineState } from '$lib/stores.svelte';
-	import { formatYear, getVisibleEvents, ZOOM_LEVELS, getZoomLevel, yearToVerticalPosition, verticalPositionToYear, PRESENT_YEAR, BIG_BANG_YEAR } from '$lib/timeline';
+	import { formatYear, formatDate, eventSortValue, getVisibleClusters, ZOOM_LEVELS, getZoomLevel, yearToVerticalPosition, verticalPositionToYear, PRESENT_YEAR, BIG_BANG_YEAR } from '$lib/timeline';
 	import type { TimelineEvent } from '$lib/db';
-	import TimelineEventCard from './TimelineEventCard.svelte';
+	import EventCluster from './EventCluster.svelte';
 	import EventCreator from './EventCreator.svelte';
-	import { MessageCircleQuestion, Plus, ZoomIn, ZoomOut } from 'lucide-svelte';
+	import { MessageCircleQuestion, Plus, ZoomIn, ZoomOut, ChevronUp, ChevronDown } from 'lucide-svelte';
 
 	let canvas: HTMLCanvasElement;
 	let container: HTMLDivElement;
@@ -28,7 +28,55 @@
 	const currentZoom = $derived(getZoomLevel(timelineState.zoomIndex));
 	const viewStart = $derived(timelineState.centerYear - currentZoom.yearsVisible / 2);
 	const viewEnd = $derived(timelineState.centerYear + currentZoom.yearsVisible / 2);
-	const visibleEvents = $derived(getVisibleEvents(timelineState.events, viewStart, viewEnd, 15, height, 80));
+	// Separate periods from point events for different rendering
+	const periodEvents = $derived(timelineState.events.filter(e => e.type === 'period' && e.endYear));
+	const pointEvents = $derived(timelineState.events.filter(e => e.type !== 'period' || !e.endYear));
+
+	const visiblePeriods = $derived(
+		periodEvents.filter(e => {
+			const eventEnd = e.endYear ?? e.year;
+			return e.year <= viewEnd && eventEnd >= viewStart;
+		})
+	);
+
+	const clusters = $derived(getVisibleClusters(pointEvents, viewStart, viewEnd, height, 50));
+
+	// Nav buttons only appear when the viewport is empty
+	const viewIsEmpty = $derived(clusters.length === 0 && visiblePeriods.length === 0);
+
+	// All events sorted by year for navigation
+	const allEventsSorted = $derived(
+		[...timelineState.events].sort((a, b) => {
+			const aVal = eventSortValue(a.year, a.month, a.day);
+			const bVal = eventSortValue(b.year, b.month, b.day);
+			return aVal - bVal;
+		})
+	);
+
+	// Next event above viewport (more recent = higher year, appears at top of screen)
+	// Find the event with the smallest year that is still above viewEnd
+	const nextEventUp = $derived(() => {
+		for (let i = 0; i < allEventsSorted.length; i++) {
+			const e = allEventsSorted[i];
+			if (e.year > viewEnd) return e;
+		}
+		return null;
+	});
+
+	// Next event below viewport (older = lower year, appears at bottom of screen)
+	// Find the event with the largest year that is still below viewStart
+	const nextEventDown = $derived(() => {
+		for (let i = allEventsSorted.length - 1; i >= 0; i--) {
+			const e = allEventsSorted[i];
+			const eventEnd = e.endYear ?? e.year;
+			if (eventEnd < viewStart) return e;
+		}
+		return null;
+	});
+
+	function scrollToEvent(year: number) {
+		timelineState.centerYear = Math.max(BIG_BANG_YEAR, Math.min(PRESENT_YEAR, year));
+	}
 
 	function getEventScreenY(year: number): number {
 		return yearToVerticalPosition(year, timelineState.centerYear, currentZoom.yearsVisible, height);
@@ -180,6 +228,8 @@
 
 			ctx.fillText(formatYear(year), TIMELINE_LEFT_OFFSET - 12, y + 4);
 		}
+
+		// Period indicators are now rendered as HTML band elements
 	}
 
 	function generateTickYears(): number[] {
@@ -259,14 +309,41 @@
 >
 	<canvas bind:this={canvas}></canvas>
 
+	<!-- Period bands layer (behind events) -->
+	<div class="periods-layer">
+		{#each visiblePeriods as event (event.id)}
+			{@const startY = getEventScreenY(event.year)}
+			{@const endY = event.endYear ? getEventScreenY(event.endYear) : startY}
+			{@const topY = Math.min(startY, endY)}
+			{@const bandHeight = Math.max(Math.abs(startY - endY), 20)}
+			{@const isSelected = timelineState.selectedEventId === event.id}
+			{@const hue = ((event.id ?? 0) * 47 + 200) % 360}
+			<div
+				class="period-band"
+				class:selected={isSelected}
+				style="top: {topY}px; height: {bandHeight}px; left: {TIMELINE_LEFT_OFFSET}px; --period-hue: {hue};"
+				onclick={(e) => { e.stopPropagation(); timelineState.selectedEventId = isSelected ? null : event.id ?? null; }}
+				role="button"
+				tabindex="0"
+			>
+				<div class="period-label">
+					<span class="period-title">{event.title}</span>
+					<span class="period-dates">
+						{formatDate(event.year, event.month, event.day)}
+						{#if event.endYear}– {formatDate(event.endYear, event.endMonth, event.endDay)}{/if}
+					</span>
+				</div>
+			</div>
+		{/each}
+	</div>
+
 	<div class="events-layer">
-		{#each visibleEvents as event (event.id)}
-			{@const y = getEventScreenY(event.year)}
-			{@const eventHeight = event.endYear ? getEventScreenY(event.endYear) - y : 0}
-			<TimelineEventCard
-				{event}
-				style="top: {y}px; left: {TIMELINE_LEFT_OFFSET + 20}px; {eventHeight > 0 ? `height: ${Math.abs(eventHeight)}px;` : ''}"
-				isPeriod={event.type === 'period'}
+		<!-- Clustered point events -->
+		{#each clusters as cluster (cluster.representative.id)}
+			<EventCluster
+				{cluster}
+				getScreenY={getEventScreenY}
+				timelineLeftOffset={TIMELINE_LEFT_OFFSET}
 			/>
 		{/each}
 	</div>
@@ -310,6 +387,37 @@
 			onClose={closeEventCreator}
 		/>
 	{/if}
+
+	<!-- Next event navigation buttons (only when view is empty) -->
+	{#if viewIsEmpty && nextEventUp()}
+		{@const evt = nextEventUp()}
+		{#if evt}
+			<button
+				class="nav-btn nav-btn-up glass-subtle"
+				onclick={() => scrollToEvent(evt.year)}
+				title="Go to {evt.title}"
+			>
+				<ChevronUp size={16} />
+				<span class="nav-btn-label">{evt.title}</span>
+				<span class="nav-btn-date">{formatDate(evt.year, evt.month, evt.day)}</span>
+			</button>
+		{/if}
+	{/if}
+
+	{#if viewIsEmpty && nextEventDown()}
+		{@const evt = nextEventDown()}
+		{#if evt}
+			<button
+				class="nav-btn nav-btn-down glass-subtle"
+				onclick={() => scrollToEvent(evt.year)}
+				title="Go to {evt.title}"
+			>
+				<span class="nav-btn-label">{evt.title}</span>
+				<span class="nav-btn-date">{formatDate(evt.year, evt.month, evt.day)}</span>
+				<ChevronDown size={16} />
+			</button>
+		{/if}
+	{/if}
 </div>
 
 <style>
@@ -332,6 +440,67 @@
 		height: 100%;
 	}
 
+	.periods-layer {
+		position: absolute;
+		top: 0;
+		left: 0;
+		width: 100%;
+		height: 100%;
+		pointer-events: none;
+		z-index: 1;
+	}
+
+	.periods-layer > :global(*) {
+		pointer-events: auto;
+	}
+
+	.period-band {
+		position: absolute;
+		right: 0;
+		background: hsla(var(--period-hue, 240), 60%, 55%, 0.07);
+		border-left: 3px solid hsla(var(--period-hue, 240), 60%, 60%, 0.5);
+		cursor: pointer;
+		transition: background 0.15s;
+	}
+
+	.period-band:hover {
+		background: hsla(var(--period-hue, 240), 60%, 55%, 0.14);
+	}
+
+	.period-band.selected {
+		background: hsla(var(--period-hue, 240), 60%, 55%, 0.18);
+		border-left-width: 4px;
+		border-left-color: hsla(var(--period-hue, 240), 70%, 65%, 0.9);
+	}
+
+	.period-label {
+		position: absolute;
+		top: 2px;
+		right: 12px;
+		display: flex;
+		flex-direction: column;
+		align-items: flex-end;
+		gap: 0px;
+		pointer-events: none;
+	}
+
+	.period-title {
+		font-size: 11px;
+		font-weight: 600;
+		color: hsla(var(--period-hue, 240), 70%, 80%, 0.85);
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		text-shadow: 0 1px 4px rgba(0, 0, 0, 0.7);
+	}
+
+	.period-dates {
+		font-size: 9px;
+		color: hsla(var(--period-hue, 240), 50%, 70%, 0.55);
+		white-space: nowrap;
+		text-shadow: 0 1px 4px rgba(0, 0, 0, 0.7);
+	}
+
 	.events-layer {
 		position: absolute;
 		top: 0;
@@ -339,6 +508,7 @@
 		width: 100%;
 		height: 100%;
 		pointer-events: none;
+		z-index: 2;
 	}
 
 	.events-layer > :global(*) {
@@ -411,7 +581,7 @@
 
 	.context-menu {
 		position: absolute;
-		transform: translate(-50%, 20px);
+		transform: translateY(-50%);
 		min-width: 180px;
 		padding: 8px 0;
 		z-index: 100;
@@ -442,5 +612,52 @@
 
 	.context-menu-item:hover {
 		background: rgba(255, 255, 255, 0.1);
+	}
+
+	.nav-btn {
+		position: absolute;
+		left: 50%;
+		transform: translateX(-50%);
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 8px 16px;
+		border: 1px solid rgba(255, 255, 255, 0.15);
+		color: rgba(255, 255, 255, 0.85);
+		cursor: pointer;
+		z-index: 50;
+		font-size: 13px;
+		white-space: nowrap;
+		max-width: 80%;
+		transition: background 0.15s, border-color 0.15s;
+		background: rgba(20, 20, 30, 0.7);
+		backdrop-filter: blur(12px);
+		border-radius: 20px;
+	}
+
+	.nav-btn:hover {
+		background: rgba(99, 102, 241, 0.25);
+		border-color: rgba(99, 102, 241, 0.5);
+	}
+
+	.nav-btn-up {
+		top: 12px;
+	}
+
+	.nav-btn-down {
+		bottom: 70px;
+	}
+
+	.nav-btn-label {
+		font-weight: 600;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		max-width: 180px;
+	}
+
+	.nav-btn-date {
+		font-size: 11px;
+		color: rgba(255, 255, 255, 0.5);
+		flex-shrink: 0;
 	}
 </style>

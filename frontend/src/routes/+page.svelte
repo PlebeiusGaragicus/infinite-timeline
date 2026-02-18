@@ -5,6 +5,7 @@
 	import Timeline from '$lib/components/Timeline.svelte';
 	import SearchBar from '$lib/components/SearchBar.svelte';
 	import ChatPanel from '$lib/components/ChatPanel.svelte';
+	import EventDetailPanel from '$lib/components/EventDetailPanel.svelte';
 
 	onMount(async () => {
 		await seedInitialEvents();
@@ -24,24 +25,27 @@
 </script>
 
 <main>
-	<SearchBar />
-	<div class="content-area">
+	<div class="timeline-column">
+		<SearchBar />
 		<Timeline />
-		<ChatPanel />
 	</div>
+	<EventDetailPanel />
+	<ChatPanel />
 </main>
 
 <style>
 	main {
 		display: flex;
-		flex-direction: column;
 		width: 100%;
 		height: 100%;
+		overflow: hidden;
 	}
 
-	.content-area {
+	.timeline-column {
 		display: flex;
+		flex-direction: column;
 		flex: 1;
+		min-width: 0;
 		overflow: hidden;
 	}
 </style>

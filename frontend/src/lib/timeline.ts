@@ -44,6 +44,9 @@ export function verticalPositionToYear(screenY: number, centerYear: number, year
 	return Math.round(centerYear + yearsFromCenter);
 }
 
+const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+const MONTH_NAMES_FULL = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+
 export function formatYear(year: number): string {
 	const absYear = Math.abs(year);
 	if (absYear >= 1_000_000_000) {
@@ -59,14 +62,36 @@ export function formatYear(year: number): string {
 	}
 }
 
-export function getVisibleEvents<T extends { year: number; endYear?: number }>(
+export function formatDate(year: number, month?: number, day?: number, short: boolean = true): string {
+	const yearStr = formatYear(year);
+	const absYear = Math.abs(year);
+	if (absYear >= 10_000 || (!month && !day)) return yearStr;
+	const names = short ? MONTH_NAMES : MONTH_NAMES_FULL;
+	if (month && day) {
+		return `${names[month - 1]} ${day}, ${yearStr}`;
+	} else if (month) {
+		return `${names[month - 1]} ${yearStr}`;
+	}
+	return yearStr;
+}
+
+export function eventSortValue(year: number, month?: number, day?: number): number {
+	return year + ((month ?? 1) - 1) / 12 + ((day ?? 1) - 1) / 365;
+}
+
+export interface EventCluster<T> {
+	events: T[];
+	representative: T;
+	year: number;
+}
+
+export function getVisibleClusters<T extends { year: number; endYear?: number; starred?: boolean; month?: number; day?: number }>(
 	events: T[],
 	viewStart: number,
 	viewEnd: number,
-	maxVisible: number = 20,
-	screenWidth: number = 1000,
-	minPixelSpacing: number = 80
-): T[] {
+	screenHeight: number = 800,
+	minPixelSpacing: number = 50
+): EventCluster<T>[] {
 	const inView = events.filter(e => {
 		const eventEnd = e.endYear ?? e.year;
 		return e.year <= viewEnd && eventEnd >= viewStart;
@@ -75,25 +100,44 @@ export function getVisibleEvents<T extends { year: number; endYear?: number }>(
 	if (inView.length === 0) return [];
 
 	const viewRange = viewEnd - viewStart;
-	const pixelsPerYear = screenWidth / viewRange;
-	
-	const sorted = [...inView].sort((a, b) => a.year - b.year);
-	
-	const visible: T[] = [];
-	let lastVisibleX = -Infinity;
-	
-	for (const event of sorted) {
-		const eventX = (event.year - viewStart) * pixelsPerYear;
-		
-		if (eventX - lastVisibleX >= minPixelSpacing) {
-			visible.push(event);
-			lastVisibleX = eventX;
-			
-			if (visible.length >= maxVisible) break;
-		}
-	}
+	const pixelsPerYear = screenHeight / viewRange;
 
-	return visible;
+	const sorted = [...inView].sort((a, b) => {
+		const aVal = eventSortValue(a.year, a.month, a.day);
+		const bVal = eventSortValue(b.year, b.month, b.day);
+		return aVal - bVal;
+	});
+
+	// Group events that are too close together into clusters
+	// Compare each event against the last event added to the current cluster
+	const clusters: EventCluster<T>[] = [];
+	let currentCluster: T[] = [sorted[0]];
+	let lastEventY = (sorted[0].year - viewStart) * pixelsPerYear;
+
+	for (let i = 1; i < sorted.length; i++) {
+		const eventY = (sorted[i].year - viewStart) * pixelsPerYear;
+		if (Math.abs(eventY - lastEventY) < minPixelSpacing) {
+			currentCluster.push(sorted[i]);
+		} else {
+			clusters.push(buildCluster(currentCluster));
+			currentCluster = [sorted[i]];
+		}
+		lastEventY = eventY;
+	}
+	clusters.push(buildCluster(currentCluster));
+
+	return clusters;
+}
+
+function buildCluster<T extends { year: number; starred?: boolean }>(events: T[]): EventCluster<T> {
+	// Pick the best representative: prefer starred, then first
+	const starred = events.filter(e => e.starred);
+	const representative = starred.length > 0 ? starred[0] : events[0];
+	return {
+		events: events,
+		representative,
+		year: representative.year
+	};
 }
 
 export { PRESENT_YEAR, BIG_BANG_YEAR };
